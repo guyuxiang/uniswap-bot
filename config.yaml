@@ -1,0 +1,44 @@
+server:
+  host: "0.0.0.0"
+  port: 8080
+  mode: "release"
+
+uniswap:
+  rpc_url: "https://unichain-sepolia-rpc.publicnode.com"
+  chain_id: 1301
+  pool_address: ""
+  factory_address: "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+  position_manager: "0xC36442b4a4522E871399CD717aBDD847Ab11FE88"
+  swap_router: "0xE592427A0AEce92De3Edee1F18E0157C05861564"
+  fee_tier: 500
+  token0_address: "0x948e15b38f096d3a664fdeef44c13709732b2110"
+  token1_address: "0x2d7efff683b0a21e0989729e0249c42cdf9ee442"
+
+bot:
+  private_key: "298149d01f7a23cb938ab6874ea345516479fb70bd5e14c99c0ffaf84798ca80"
+  core_ratio: 0.6
+  mid_ratio: 0.3
+  tail_ratio: 0.1
+  core_range_bps: 5
+  mid_range_bps: 50
+  tail_range_bps: 200
+  rebalance_threshold: 0.002
+  rebalance_interval_seconds: 60
+
+risk:
+  max_daily_loss_bps: 50
+  max_single_trade_bps: 10
+  circuit_breaker_deviation_bps: 30
+  circuit_breaker_duration_minutes: 15
+  max_leverage: 10
+
+oracle:
+  twap_interval_seconds: 300
+  ref_price: 1.0
+
+execution:
+  gas_limit: 500000
+  gas_price_multiplier: 1.1
+  max_slippage_bps: 30
+  deadline_seconds: 300
+  retry_times: 3
