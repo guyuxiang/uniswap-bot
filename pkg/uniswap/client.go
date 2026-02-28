@@ -113,14 +113,15 @@ func (c *Client) GetChainID() int64 {
 }
 
 func (c *Client) Close() error {
-	return c.ethClient.Close()
+	c.ethClient.Close()
+	return nil
 }
 
 func PriceToTick(price float64) int32 {
 	if price <= 0 {
 		return 0
 	}
-	tick := math.Log(price) / math.Ln1_0001
+	tick := math.Log(price) / math.Log(1.0001)
 	return int32(tick)
 }
 

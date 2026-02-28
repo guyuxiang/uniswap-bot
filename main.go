@@ -12,7 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -39,7 +38,7 @@ const (
 var (
 	cfg             *config.Config
 	uniswapClient   *uniswap.Client
-	positionService position.PositionService
+	positionService *position.PositionService
 	riskEngine      *risk.RiskEngine
 	priceOracle     *oracle.PriceOracle
 	rebalancerSvc   *rebalancer.Rebalancer
@@ -132,7 +131,7 @@ func handleCreatePool() {
 
 	factoryABI := `[{"type":"function","name":"createPool","inputs":[{"name":"tokenA","type":"address"},{"name":"tokenB","type":"address"},{"name":"fee","type":"uint24"}],"outputs":[{"name":"pool","type":"address"}],"stateMutability":"nonpayable"}]`
 
-	parsedABI, err := abi.JSON([]byte(factoryABI))
+	parsedABI, err := abi.JSON(strings.NewReader(factoryABI))
 	if err != nil {
 		log.Fatalf("Failed to parse ABI: %v", err)
 	}
@@ -214,8 +213,8 @@ func handleAddLiquidity() {
 
 	refPrice := cfg.Oracle.RefPrice
 	coreBps := cfg.Bot.CoreRangeBps
-	tickLower := int24(math.Log(refPrice*(1-float64(coreBps)/10000)) / math.Ln1_0001)
-	tickUpper := int24(math.Log(refPrice*(1+float64(coreBps)/10000)) / math.Ln1_0001)
+	tickLower := int24(math.Log(refPrice*(1-float64(coreBps)/10000)) / math.Log(1.0001))
+	tickUpper := int24(math.Log(refPrice*(1+float64(coreBps)/10000)) / math.Log(1.0001))
 
 	fmt.Printf("=============================================\n")
 	fmt.Printf("       Add Liquidity to GLUSD/USDT\n")
@@ -230,7 +229,7 @@ func handleAddLiquidity() {
 
 	posMgrABI := `[{"type":"function","name":"mint","inputs":[{"name":"params","type":"tuple","components":[{"name":"token0","type":"address"},{"name":"token1","type":"address"},{"name":"fee","type":"uint24"},{"name":"tickLower","type":"int24"},{"name":"tickUpper","type":"int24"},{"name":"amount0Desired","type":"uint256"},{"name":"amount1Desired","type":"uint256"},{"name":"amount0Min","type":"uint256"},{"name":"amount1Min","type":"uint256"},{"name":"recipient","type":"address"},{"name":"deadline","type":"uint256"}]}],"outputs":[{"name":"tokenId","type":"uint256"},{"name":"amount0","type":"uint256"},{"name":"amount1","type":"uint256"}],"stateMutability":"nonpayable"}]`
 
-	parsedABI, err := abi.JSON([]byte(posMgrABI))
+	parsedABI, err := abi.JSON(strings.NewReader(posMgrABI))
 	if err != nil {
 		log.Fatalf("Failed to parse ABI: %v", err)
 	}
@@ -319,7 +318,7 @@ func handleAddLiquidity() {
 
 type Bot struct {
 	uniswapClient   *uniswap.Client
-	positionService position.PositionService
+	positionService *position.PositionService
 	riskEngine      *risk.RiskEngine
 	priceOracle     *oracle.PriceOracle
 	rebalancer      *rebalancer.Rebalancer

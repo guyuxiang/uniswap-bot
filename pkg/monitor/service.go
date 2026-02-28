@@ -28,12 +28,12 @@ type Metrics struct {
 
 type Monitor struct {
 	metrics     *Metrics
-	positionSvc position.PositionService
+	positionSvc *position.PositionService
 	riskEngine  *risk.RiskEngine
 	rebalancer  *rebalancer.Rebalancer
 }
 
-func NewMonitor(positionSvc position.PositionService, riskEngine *risk.RiskEngine, rebalancer *rebalancer.Rebalancer) *Monitor {
+func NewMonitor(positionSvc *position.PositionService, riskEngine *risk.RiskEngine, rebalancer *rebalancer.Rebalancer) *Monitor {
 	return &Monitor{
 		metrics:     &Metrics{},
 		positionSvc: positionSvc,

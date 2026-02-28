@@ -2,9 +2,11 @@ package position
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"fmt"
 	"math"
 	"math/big"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -19,7 +21,7 @@ const PositionManagerABI = `[{"type":"function","name":"mint","inputs":[{"name":
 type PositionManager struct {
 	client     *ethclient.Client
 	address    common.Address
-	privateKey *crypto.ECDSA
+	privateKey *ecdsa.PrivateKey
 	chainID    *big.Int
 }
 
@@ -63,12 +65,12 @@ type MintResult struct {
 }
 
 func (pm *PositionManager) Mint(ctx context.Context, params MintParams) (*MintResult, *types.Transaction, error) {
-	parsedABI, err := abi.JSON([]byte(PositionManagerABI))
+	parsedABI, err := abi.JSON(strings.NewReader(PositionManagerABI))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to parse ABI: %w", err)
 	}
 
-	recipient := crypto.PubkeyToAddress(pm.privateKey.Input)
+	recipient := crypto.PubkeyToAddress(pm.privateKey.PublicKey)
 
 	type MintParamsInternal struct {
 		Token0         common.Address `json:"token0"`
@@ -149,9 +151,10 @@ func (pm *PositionManager) Mint(ctx context.Context, params MintParams) (*MintRe
 }
 
 func (pm *PositionManager) Close() error {
-	return pm.client.Close()
+	pm.client.Close()
+	return nil
 }
 
 func PriceToTick(price float64) int32 {
-	return int32(math.Log(price) / math.Ln1_0001)
+	return int32(math.Log(price) / math.Log(1.0001))
 }

@@ -1,6 +1,7 @@
 package position
 
 import (
+	"context"
 	"fmt"
 	"math/big"
 
@@ -26,7 +27,7 @@ type Layer struct {
 	Liquidity  *big.Int
 }
 
-type PositionManager interface {
+type PositionManagerClient interface {
 	Mint(ctx context.Context, token0, token1 common.Address, fee uint32, tickLower, tickUpper int32, amount0Desired, amount1Desired *big.Int) (*types.Transaction, *big.Int, error)
 	AddLiquidity(ctx context.Context, tokenId *big.Int, amount0Desired, amount1Desired *big.Int) (*types.Transaction, error)
 	RemoveLiquidity(ctx context.Context, tokenId, liquidity *big.Int) (*types.Transaction, error)

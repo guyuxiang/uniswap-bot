@@ -14,13 +14,13 @@ import (
 type Server struct {
 	cfg         *config.Config
 	router      *gin.Engine
-	positionSvc position.PositionService
+	positionSvc *position.PositionService
 	riskEngine  *risk.RiskEngine
 	rebalancer  *rebalancer.Rebalancer
 	monitor     *monitor.Monitor
 }
 
-func NewServer(cfg *config.Config, positionSvc position.PositionService, riskEngine *risk.RiskEngine, rebalancer *rebalancer.Rebalancer, monitor *monitor.Monitor) *Server {
+func NewServer(cfg *config.Config, positionSvc *position.PositionService, riskEngine *risk.RiskEngine, rebalancer *rebalancer.Rebalancer, monitor *monitor.Monitor) *Server {
 	server := &Server{
 		cfg:         cfg,
 		router:      gin.Default(),

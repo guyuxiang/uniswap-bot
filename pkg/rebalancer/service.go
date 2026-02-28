@@ -14,7 +14,7 @@ import (
 
 type Rebalancer struct {
 	cfg             *config.Config
-	positionService position.PositionService
+	positionService *position.PositionService
 	riskEngine      *risk.RiskEngine
 	currentPrice    *big.Float
 	twapPrice       *big.Float
@@ -22,7 +22,7 @@ type Rebalancer struct {
 	isRunning       bool
 }
 
-func NewRebalancer(cfg *config.Config, positionService position.PositionService, riskEngine *risk.RiskEngine) *Rebalancer {
+func NewRebalancer(cfg *config.Config, positionService *position.PositionService, riskEngine *risk.RiskEngine) *Rebalancer {
 	return &Rebalancer{
 		cfg:             cfg,
 		positionService: positionService,
