@@ -307,29 +307,7 @@ func (e *Executor) GetBalance(ctx context.Context, address common.Address) (*big
 }
 
 func (e *Executor) GetTokenBalance(ctx context.Context, tokenAddr, ownerAddr common.Address) (*big.Int, error) {
-	if tokenAddr == common.HexToAddress("0x0000000000000000000000000000000000000000") {
-		return e.ethClient.BalanceAt(ctx, ownerAddr, nil)
-	}
-
-	balanceOfMethod := "0x70a08231"
-	balanceOfArgs := common.LeftPadBytes(ownerAddr.Bytes(), 32)
-
-	data := append([]byte(balanceOfMethod), balanceOfArgs...)
-
-	result, err := e.rpcCall("eth_call", map[string]interface{}{
-		"to":   tokenAddr.Hex(),
-		"data": common.Bytes2Hex(data),
-	})
-	if err != nil {
-		return big.NewInt(0), err
-	}
-
-	if len(result) == 0 {
-		return big.NewInt(0), nil
-	}
-
-	balance := new(big.Int).SetBytes(result)
-	return balance, nil
+	return GetTokenBalance(ctx, e.ethClient, tokenAddr, ownerAddr)
 }
 
 func PriceToTick(price float64) int32 {
