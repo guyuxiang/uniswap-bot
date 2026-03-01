@@ -6,9 +6,9 @@ import (
 	"math"
 	"math/big"
 
-	coreEntities "github.com/daoleno/uniswap-sdk-core/entities"
+	sdkCoreEntities "github.com/daoleno/uniswap-sdk-core/entities"
 	"github.com/daoleno/uniswapv3-sdk/constants"
-	"github.com/daoleno/uniswapv3-sdk/entities"
+	sdkEntities "github.com/daoleno/uniswapv3-sdk/entities"
 	"github.com/daoleno/uniswapv3-sdk/examples/contract"
 	"github.com/daoleno/uniswapv3-sdk/utils"
 	"github.com/ethereum/go-ethereum/common"
@@ -38,17 +38,17 @@ type Slot0 struct {
 }
 
 type Client struct {
-	ethClient *ethclient.Client
-	poolAddr  common.Address
-	feeTier   uint32
-	chainID   int64
+	ethClient  *ethclient.Client
+	poolAddr   common.Address
+	feeTier    uint32
+	chainID    int64
+	token0Addr common.Address
+	token1Addr common.Address
 
-	token0     *coreEntities.Token
-	token1     *coreEntities.Token
-	sdkPool    *entities.Pool
-	factory    *contract.Uniswapv3Factory
+	sdkPool     *sdkEntities.Pool
+	factory     *contract.Uniswapv3Factory
 	positionMgr *contract.Uniswapv3NFTPositionManager
-	swapRouter *contract.Uniswapv3SwapRouter
+	swapRouter  *contract.Uniswapv3RouterV2
 }
 
 func NewClient(rpcURL, poolAddress string, feeTier uint32) (*Client, error) {
@@ -62,11 +62,8 @@ func NewClient(rpcURL, poolAddress string, feeTier uint32) (*Client, error) {
 	positionMgrAddr := common.HexToAddress("0xC36442b4a4522E871399CD717aBDD847Ab11FE88")
 	swapRouterAddr := common.HexToAddress("0xE592427A0AEce92De3Edee1F18E0157C05861564")
 
-	GLUSD := common.HexToAddress("0x948e15b38f096d3a664fdeef44c13709732b2110")
-	USDT := common.HexToAddress("0x2d7efff683b0a21e0989729e0249c42cdf9ee442")
-
-	token0 := coreEntities.NewToken(1301, GLUSD, 18, "GLUSD", "GLUSD")
-	token1 := coreEntities.NewToken(1301, USDT, 18, "USDT", "USDT")
+	token0Addr := common.HexToAddress("0x948e15b38f096d3a664fdeef44c13709732b2110")
+	token1Addr := common.HexToAddress("0x2d7efff683b0a21e0989729e0249c42cdf9ee442")
 
 	factory, err := contract.NewUniswapv3Factory(factoryAddr, client)
 	if err != nil {
@@ -78,21 +75,21 @@ func NewClient(rpcURL, poolAddress string, feeTier uint32) (*Client, error) {
 		return nil, fmt.Errorf("failed to create position manager: %w", err)
 	}
 
-	swapRouter, err := contract.NewUniswapv3SwapRouter(swapRouterAddr, client)
+	swapRouter, err := contract.NewUniswapv3RouterV2(swapRouterAddr, client)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create swap router: %w", err)
 	}
 
 	return &Client{
-		ethClient:   client,
-		poolAddr:    poolAddr,
-		feeTier:     feeTier,
-		chainID:     1301,
-		token0:      token0,
-		token1:      token1,
-		factory:     factory,
+		ethClient:  client,
+		poolAddr:   poolAddr,
+		feeTier:    feeTier,
+		chainID:    1301,
+		token0Addr: token0Addr,
+		token1Addr: token1Addr,
+		factory:    factory,
 		positionMgr: positionMgr,
-		swapRouter:  swapRouter,
+		swapRouter: swapRouter,
 	}, nil
 }
 
@@ -104,46 +101,49 @@ func (c *Client) GetPool(ctx context.Context) (*Pool, error) {
 
 	return &Pool{
 		Address:   c.poolAddr,
-		Token0:    &Token{Address: c.token0.Address, Decimals: c.token0.Decimals, Symbol: c.token0.Symbol, Name: c.token0.Name},
-		Token1:    &Token{Address: c.token1.Address, Decimals: c.token1.Decimals, Symbol: c.token1.Symbol, Name: c.token1.Name},
+		Token0:    &Token{Address: c.token0Addr, Decimals: 18, Symbol: "GLUSD", Name: "GLUSD"},
+		Token1:    &Token{Address: c.token1Addr, Decimals: 18, Symbol: "USDT", Name: "USDT"},
 		Fee:       c.feeTier,
 		Liquidity: pool.Liquidity,
 		Slot0: Slot0{
-			Price:            pool.SqrtPriceX96,
-			Tick:             int32(pool.Tick),
+			Price:            pool.SqrtRatioX96,
+			Tick:             int32(pool.TickCurrent),
 			ObservationIndex: 0,
 		},
 	}, nil
 }
 
-func (c *Client) fetchPoolData(ctx context.Context) (*entities.Pool, error) {
+func (c *Client) fetchPoolData(ctx context.Context) (*sdkEntities.Pool, error) {
 	contractPool, err := contract.NewUniswapv3Pool(c.poolAddr, c.ethClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pool contract: %w", err)
 	}
 
-	liquidity, err := contractPool.Liquidity(ctx, nil)
+	liquidity, err := contractPool.Liquidity(nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get liquidity: %w", err)
 	}
 
-	slot0, err := contractPool.Slot0(ctx, nil)
+	slot0, err := contractPool.Slot0(nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get slot0: %w", err)
 	}
 
+	token0 := sdkCoreEntities.NewToken(uint(c.chainID), c.token0Addr, 18, "GLUSD", "GLUSD")
+	token1 := sdkCoreEntities.NewToken(uint(c.chainID), c.token1Addr, 18, "USDT", "USDT")
+
 	feeAmount := constants.FeeAmount(c.feeTier)
 	tickSpacing := constants.TickSpacings[feeAmount]
 
-	minTick := entities.NearestUsableTick(utils.MinTick, tickSpacing)
-	maxTick := entities.NearestUsableTick(utils.MaxTick, tickSpacing)
+	minTick := sdkEntities.NearestUsableTick(utils.MinTick, tickSpacing)
+	maxTick := sdkEntities.NearestUsableTick(utils.MaxTick, tickSpacing)
 
-	pooltick, err := contractPool.Ticks(ctx, big.NewInt(int64(minTick)))
+	pooltick, err := contractPool.Ticks(nil, big.NewInt(int64(minTick)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get tick: %w", err)
 	}
 
-	ticks := []entities.Tick{
+	ticks := []sdkEntities.Tick{
 		{
 			Index:          minTick,
 			LiquidityNet:   pooltick.LiquidityNet,
@@ -156,12 +156,12 @@ func (c *Client) fetchPoolData(ctx context.Context) (*entities.Pool, error) {
 		},
 	}
 
-	tickDataProvider, err := entities.NewTickListDataProvider(ticks, tickSpacing)
+	tickDataProvider, err := sdkEntities.NewTickListDataProvider(ticks, tickSpacing)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create tick data provider: %w", err)
 	}
 
-	pool, err := entities.NewPool(c.token0, c.token1, feeAmount, slot0.SqrtPriceX96, liquidity, int(slot0.Tick.Int64()), tickDataProvider)
+	pool, err := sdkEntities.NewPool(token0, token1, feeAmount, slot0.SqrtPriceX96, liquidity, int(slot0.Tick.Int64()), tickDataProvider)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pool: %w", err)
 	}
@@ -198,7 +198,7 @@ func (c *Client) GetPositionManager() *contract.Uniswapv3NFTPositionManager {
 	return c.positionMgr
 }
 
-func (c *Client) GetSwapRouter() *contract.Uniswapv3SwapRouter {
+func (c *Client) GetSwapRouter() *contract.Uniswapv3RouterV2 {
 	return c.swapRouter
 }
 
@@ -206,23 +206,23 @@ func (c *Client) GetFactory() *contract.Uniswapv3Factory {
 	return c.factory
 }
 
-func (c *Client) GetSDKPool(ctx context.Context) (*entities.Pool, error) {
+func (c *Client) GetSDKPool(ctx context.Context) (*sdkEntities.Pool, error) {
 	if c.sdkPool != nil {
 		return c.sdkPool, nil
 	}
 	return c.fetchPoolData(ctx)
 }
 
-func (c *Client) GetToken0() *coreEntities.Token {
-	return c.token0
+func (c *Client) GetToken0() common.Address {
+	return c.token0Addr
 }
 
-func (c *Client) GetToken1() *coreEntities.Token {
-	return c.token1
+func (c *Client) GetToken1() common.Address {
+	return c.token1Addr
 }
 
-func (c *Client) Close() error {
-	return c.ethClient.Close()
+func (c *Client) Close() {
+	c.ethClient.Close()
 }
 
 func PriceToTick(price float64) int32 {
