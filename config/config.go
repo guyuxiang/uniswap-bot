@@ -28,6 +28,7 @@ type UniswapConfig struct {
 	FactoryAddress  string `yaml:"factory_address"`
 	PositionManager string `yaml:"position_manager"`
 	SwapRouter      string `yaml:"swap_router"`
+	Quoter          string `yaml:"quoter"`
 	FeeTier         uint32 `yaml:"fee_tier"`
 	Token0Address   string `yaml:"token0_address"`
 	Token1Address   string `yaml:"token1_address"`

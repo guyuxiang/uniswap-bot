@@ -3,11 +3,8 @@ module uniswap-bot
 go 1.25.3
 
 require (
-	github.com/daoleno/uniswap-sdk-core v0.1.5
-	github.com/daoleno/uniswapv3-sdk v0.0.0
 	github.com/ethereum/go-ethereum v1.17.0
 	github.com/gin-gonic/gin v1.12.0
-	github.com/shopspring/decimal v1.3.1
 	gopkg.in/yaml.v3 v3.0.1
 )
 
