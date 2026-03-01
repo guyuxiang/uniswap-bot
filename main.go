@@ -291,7 +291,7 @@ type Bot struct {
 }
 
 func NewBot() (*Bot, error) {
-	uniswapClient, err := uniswap.NewClient(cfg.Uniswap.RPCURL, cfg.Uniswap.PoolAddress, cfg.Uniswap.FeeTier)
+	uniswapClient, err := uniswap.NewClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create uniswap client: %w", err)
 	}

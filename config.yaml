@@ -8,8 +8,8 @@ uniswap:
   chain_id: 1301
   pool_address: "0x4e250d2b6f4534a0e5d3f08c3b16e80c4e63aef4"
   factory_address: "0x1F98431c8aD98523631AE4a59f267346ea31F984"
-  position_manager: "0xC36442b4a4522E871399CD717aBDD847Ab11FE88"
-  swap_router: "0xE592427A0AEce92De3Edee1F18E0157C05861564"
+  position_manager: "0xB7F724d6dDDFd008eFf5cc2834edDE5F9eF0d075"
+  swap_router: "0xd1AAE39293221B77B0C71fBD6dCb7Ea29Bb5B166"
   fee_tier: 500
   token0_address: "0x948e15b38f096d3a664fdeef44c13709732b2110"
   token1_address: "0x2d7efff683b0a21e0989729e0249c42cdf9ee442"
