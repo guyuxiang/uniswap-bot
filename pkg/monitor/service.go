@@ -104,7 +104,7 @@ func (m *Monitor) GetMetrics() *Metrics {
 
 func (m *Monitor) CheckAlerts() []Alert {
 	m.metrics.mu.RLock()
-	defer m.metrics.mu.Unlock()
+	defer m.metrics.mu.RUnlock()
 
 	var alerts []Alert
 
