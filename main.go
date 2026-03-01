@@ -8,11 +8,9 @@ import (
 	"math/big"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -110,14 +108,9 @@ func handleCreatePool() {
 		log.Fatalf("Invalid private key: %v", err)
 	}
 
-	auth, err := bind.NewKeyedTransactorWithChainID(privateKey, chainID)
-	if err != nil {
-		log.Fatalf("Failed to create transactor: %v", err)
-	}
-
 	token0 := common.HexToAddress(cfg.Uniswap.Token0Address)
 	token1 := common.HexToAddress(cfg.Uniswap.Token1Address)
-	fee := uint24(cfg.Uniswap.FeeTier)
+	fee := uint32(cfg.Uniswap.FeeTier)
 	factoryAddr := common.HexToAddress(cfg.Uniswap.FactoryAddress)
 
 	fmt.Printf("=============================================\n")
@@ -129,27 +122,25 @@ func handleCreatePool() {
 	fmt.Printf("Factory:        %s\n", factoryAddr.Hex())
 	fmt.Println()
 
-	factoryABI := `[{"type":"function","name":"createPool","inputs":[{"name":"tokenA","type":"address"},{"name":"tokenB","type":"address"},{"name":"fee","type":"uint24"}],"outputs":[{"name":"pool","type":"address"}],"stateMutability":"nonpayable"}]`
-
-	parsedABI, err := abi.JSON(strings.NewReader(factoryABI))
-	if err != nil {
-		log.Fatalf("Failed to parse ABI: %v", err)
-	}
-
-	input, err := parsedABI.Pack("createPool", token0, token1, fee)
-	if err != nil {
-		log.Fatalf("Failed to pack input: %v", err)
-	}
+	methodID := crypto.Keccak256([]byte("createPool(address,address,uint24)"))[:4]
+	
+	token0Bytes := common.LeftPadBytes(token0.Bytes(), 32)
+	token1Bytes := common.LeftPadBytes(token1.Bytes(), 32)
+	feeBytes := common.LeftPadBytes(big.NewInt(int64(fee)).Bytes(), 32)
+	
+	input := append(methodID, append(token0Bytes, append(token1Bytes, feeBytes...)...)...)
 
 	gasPrice, err := client.SuggestGasPrice(ctx)
 	if err != nil {
 		log.Fatalf("Failed to suggest gas price: %v", err)
 	}
 
-	auth.GasPrice = gasPrice
-	auth.GasLimit = 500000
+	nonce, err := client.PendingNonceAt(ctx, crypto.PubkeyToAddress(privateKey.PublicKey))
+	if err != nil {
+		log.Fatalf("Failed to get nonce: %v", err)
+	}
 
-	tx := types.NewTransaction(auth.Nonce.Uint64(), factoryAddr, big.NewInt(0), 500000, gasPrice, input)
+	tx := types.NewTransaction(nonce, factoryAddr, big.NewInt(0), 500000, gasPrice, input)
 	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(chainID), privateKey)
 	if err != nil {
 		log.Fatalf("Failed to sign transaction: %v", err)
@@ -198,23 +189,18 @@ func handleAddLiquidity() {
 		log.Fatalf("Invalid private key: %v", err)
 	}
 
-	auth, err := bind.NewKeyedTransactorWithChainID(privateKey, chainID)
-	if err != nil {
-		log.Fatalf("Failed to create transactor: %v", err)
-	}
-
 	token0 := common.HexToAddress(cfg.Uniswap.Token0Address)
 	token1 := common.HexToAddress(cfg.Uniswap.Token1Address)
 	posMgrAddr := common.HexToAddress(cfg.Uniswap.PositionManager)
-	fee := uint24(cfg.Uniswap.FeeTier)
+	fee := uint32(cfg.Uniswap.FeeTier)
 
 	amount0 := big.NewInt(0).Mul(big.NewInt(100), big.NewInt(1e18))
 	amount1 := big.NewInt(0).Mul(big.NewInt(100), big.NewInt(1e18))
 
 	refPrice := cfg.Oracle.RefPrice
 	coreBps := cfg.Bot.CoreRangeBps
-	tickLower := int24(math.Log(refPrice*(1-float64(coreBps)/10000)) / math.Log(1.0001))
-	tickUpper := int24(math.Log(refPrice*(1+float64(coreBps)/10000)) / math.Log(1.0001))
+	tickLower := int32(math.Log(refPrice*(1-float64(coreBps)/10000)) / math.Log(1.0001))
+	tickUpper := int32(math.Log(refPrice*(1+float64(coreBps)/10000)) / math.Log(1.0001))
 
 	fmt.Printf("=============================================\n")
 	fmt.Printf("       Add Liquidity to GLUSD/USDT\n")
@@ -227,58 +213,36 @@ func handleAddLiquidity() {
 	fmt.Printf("Tick Range: [%d, %d]\n", tickLower, tickUpper)
 	fmt.Printf("Fee: %d\n\n", fee)
 
-	posMgrABI := `[{"type":"function","name":"mint","inputs":[{"name":"params","type":"tuple","components":[{"name":"token0","type":"address"},{"name":"token1","type":"address"},{"name":"fee","type":"uint24"},{"name":"tickLower","type":"int24"},{"name":"tickUpper","type":"int24"},{"name":"amount0Desired","type":"uint256"},{"name":"amount1Desired","type":"uint256"},{"name":"amount0Min","type":"uint256"},{"name":"amount1Min","type":"uint256"},{"name":"recipient","type":"address"},{"name":"deadline","type":"uint256"}]}],"outputs":[{"name":"tokenId","type":"uint256"},{"name":"amount0","type":"uint256"},{"name":"amount1","type":"uint256"}],"stateMutability":"nonpayable"}]`
-
-	parsedABI, err := abi.JSON(strings.NewReader(posMgrABI))
-	if err != nil {
-		log.Fatalf("Failed to parse ABI: %v", err)
-	}
+	methodID := crypto.Keccak256([]byte("mint((address,address,uint24,int24,int24,uint256,uint256,uint256,uint256,address,uint256))"))[:4]
 
 	recipient := crypto.PubkeyToAddress(privateKey.PublicKey)
-	deadline := big.NewInt(0).Add(big.NewInt(0), big.NewInt(300))
+	deadline := big.NewInt(time.Now().Unix() + 300)
 
-	type MintParams struct {
-		Token0         common.Address `json:"token0"`
-		Token1         common.Address `json:"token1"`
-		FEE            uint24         `json:"fee"`
-		TickLower      int24          `json:"tickLower"`
-		TickUpper      int24          `json:"tickUpper"`
-		Amount0Desired *big.Int       `json:"amount0Desired"`
-		Amount1Desired *big.Int       `json:"amount1Desired"`
-		Amount0Min     *big.Int       `json:"amount0Min"`
-		Amount1Min     *big.Int       `json:"amount1Min"`
-		Recipient      common.Address `json:"recipient"`
-		Deadline       *big.Int       `json:"deadline"`
-	}
-
-	params := MintParams{
-		Token0:         token0,
-		Token1:         token1,
-		FEE:            fee,
-		TickLower:      tickLower,
-		TickUpper:      tickUpper,
-		Amount0Desired: amount0,
-		Amount1Desired: amount1,
-		Amount0Min:     big.NewInt(0),
-		Amount1Min:     big.NewInt(0),
-		Recipient:      recipient,
-		Deadline:       deadline,
-	}
-
-	input, err := parsedABI.Pack("mint", params)
-	if err != nil {
-		log.Fatalf("Failed to pack input: %v", err)
-	}
+	data := []byte{}
+	data = append(data, methodID...)
+	data = append(data, common.LeftPadBytes(token0.Bytes(), 32)...)
+	data = append(data, common.LeftPadBytes(token1.Bytes(), 32)...)
+	data = append(data, common.LeftPadBytes(big.NewInt(int64(fee)).Bytes(), 32)...)
+	data = append(data, common.LeftPadBytes(big.NewInt(int64(tickLower)).Bytes(), 32)...)
+	data = append(data, common.LeftPadBytes(big.NewInt(int64(tickUpper)).Bytes(), 32)...)
+	data = append(data, common.LeftPadBytes(amount0.Bytes(), 32)...)
+	data = append(data, common.LeftPadBytes(amount1.Bytes(), 32)...)
+	data = append(data, common.LeftPadBytes(big.NewInt(0).Bytes(), 32)...)
+	data = append(data, common.LeftPadBytes(big.NewInt(0).Bytes(), 32)...)
+	data = append(data, common.LeftPadBytes(recipient.Bytes(), 32)...)
+	data = append(data, common.LeftPadBytes(deadline.Bytes(), 32)...)
 
 	gasPrice, err := client.SuggestGasPrice(ctx)
 	if err != nil {
 		log.Fatalf("Failed to suggest gas price: %v", err)
 	}
 
-	auth.GasPrice = gasPrice
-	auth.GasLimit = 800000
+	nonce, err := client.PendingNonceAt(ctx, crypto.PubkeyToAddress(privateKey.PublicKey))
+	if err != nil {
+		log.Fatalf("Failed to get nonce: %v", err)
+	}
 
-	tx := types.NewTransaction(auth.Nonce.Uint64(), posMgrAddr, big.NewInt(0), 800000, gasPrice, input)
+	tx := types.NewTransaction(nonce, posMgrAddr, big.NewInt(0), 800000, gasPrice, data)
 	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(chainID), privateKey)
 	if err != nil {
 		log.Fatalf("Failed to sign transaction: %v", err)
@@ -477,8 +441,3 @@ func (b *Bot) Stop() {
 	b.rebalancer.Stop()
 	b.uniswapClient.Close()
 }
-
-var _ = strings.TrimSpace
-
-type uint24 uint32
-type int24 int32
