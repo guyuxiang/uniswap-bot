@@ -10,8 +10,8 @@ uniswap:
   factory_address: "0x1F98431c8aD98523631AE4a59f267346ea31F984"
   position_manager: "0xB7F724d6dDDFd008eFf5cc2834edDE5F9eF0d075"
   swap_router: "0xd1AAE39293221B77B0C71fBD6dCb7Ea29Bb5B166"
-  stabilization_vault_address: "0x235E11c83C816C593D47370a32484F5251F519c0"
-  fee_tier: 100
+  stabilization_vault_address: "0x38D5C80566B8D2CE93D0B7fe0993aF987d06Eb1f"
+  fee_tier: 500
   token0_address: "0x2d7efff683b0a21e0989729e0249c42cdf9ee442"
   token1_address: "0x948e15b38f096d3a664fdeef44c13709732b2110"
 
