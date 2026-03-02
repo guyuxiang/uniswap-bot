@@ -114,19 +114,49 @@ contract StabilizationVault is Ownable, ReentrancyGuard {
         return pool.liquidity();
     }
 
+    /// @notice Calculate amountIn needed to reach target price, considering swap direction
+    /// @param _targetPrice The target price (token1/token0) to reach
+    /// @return amountIn The estimated amount of tokenIn needed
     function calculateSwapAmount(uint256 _targetPrice) public view returns (uint256 amountIn) {
-        (uint160 sqrtPriceX96, int24 tick, , , , , ) = pool.slot0();
+        (uint160 sqrtPriceX96, , , , , , ) = pool.slot0();
         uint128 liquidity = pool.liquidity();
         require(liquidity > 0, "No liquidity");
         
-        uint160 targetSqrtPriceX96 = _priceToSqrtPriceX96(_targetPrice);
-        (amountIn, , ) = amountInToReachTarget(pool, targetSqrtPriceX96);
+        // Calculate current price from sqrtPriceX96
+        uint256 currentPrice = (uint256(sqrtPriceX96) ** 2) >> 192;
         
-        uint256 minAmount = 10 ** IERC20Metadata(token0).decimals();
+        // Determine swap direction
+        bool zeroForOne = _targetPrice > currentPrice;
+        
+        // Convert target price to sqrtPriceX96
+        // price = (sqrtPriceX96^2) / 2^192
+        // sqrtPriceX96 = sqrt(price * 2^192)
+        uint160 targetSqrtPriceX96 = _priceToSqrtPriceX96(_targetPrice);
+        
+        // Use zeroForOne to determine direction
+        uint160 targetForCalc = zeroForOne ? targetSqrtPriceX96 : sqrtPriceX96;
+        uint160 currentForCalc = zeroForOne ? sqrtPriceX96 : targetSqrtPriceX96;
+        
+        (amountIn, , ) = amountInToReachTarget(pool, currentForCalc, targetForCalc);
+        
+        // Use correct token decimals based on direction
+        uint8 decimals = zeroForOne ? IERC20Metadata(token0).decimals() : IERC20Metadata(token1).decimals();
+        uint256 minAmount = 10 ** decimals;
         if (amountIn < minAmount) amountIn = minAmount;
     }
 
-    function amountInToReachTarget(IUniswapV3Pool poolAddr, uint160 targetSqrtPriceX96) public view returns (uint256 amountInWithFee, int24 finalTick, uint128 finalLiquidity) {
+    /// @notice Calculate amountIn to move from current sqrtPrice to target sqrtPrice
+    /// @param poolAddr The Uniswap V3 pool
+    /// @param currentSqrtPriceX96 Current sqrt price
+    /// @param targetSqrtPriceX96 Target sqrt price
+    /// @return amountInWithFee Amount of tokenIn (including fee)
+    /// @return finalTick Final tick after swap
+    /// @return finalLiquidity Final liquidity after swap
+    function amountInToReachTarget(
+        IUniswapV3Pool poolAddr, 
+        uint160 currentSqrtPriceX96,
+        uint160 targetSqrtPriceX96
+    ) public view returns (uint256 amountInWithFee, int24 finalTick, uint128 finalLiquidity) {
         (uint160 sqrtPriceX96, int24 tick, , , , , ) = poolAddr.slot0();
         uint128 liquidity = poolAddr.liquidity();
         int24 tickSpacing = poolAddr.tickSpacing();
@@ -134,7 +164,10 @@ contract StabilizationVault is Ownable, ReentrancyGuard {
         require(liquidity > 0);
         require(targetSqrtPriceX96 != sqrtPriceX96);
         
-        bool zeroForOne = sqrtPriceX96 > targetSqrtPriceX96;
+        bool zeroForOne = currentSqrtPriceX96 > targetSqrtPriceX96;
+        
+        // Override with calculated direction
+        sqrtPriceX96 = currentSqrtPriceX96;
         
         while (sqrtPriceX96 != targetSqrtPriceX96) {
             (int24 nextTick, ) = _nextInitializedTick(poolAddr, tick, tickSpacing, zeroForOne);
@@ -187,12 +220,27 @@ contract StabilizationVault is Ownable, ReentrancyGuard {
         return TickBitmap.nextInitializedTickWithinOneWord(w, ct, ts, lte);
     }
 
-    function _priceToSqrtPriceX96(uint256 p) internal pure returns (uint160) { 
-        return TickMath.getSqrtRatioAtTick(_priceToTick(p)); 
+    /// @notice Convert price (token1/token0) to sqrtPriceX96
+    /// @param price The price in token1/token0 (e.g., 1 = 1:1 peg)
+    /// @return The sqrt price X96
+    function _priceToSqrtPriceX96(uint256 price) internal pure returns (uint160) { 
+        // price = sqrtPriceX96^2 / 2^192
+        // sqrtPriceX96 = sqrt(price * 2^192)
+        // Use 2^192 = 2^(96*2)
+        uint256 priceX192 = price << 192;
+        return uint160(_sqrt(priceX192));
     }
     
-    function _priceToTick(uint256 p) internal pure returns (int24) { 
-        return TickMath.getTickAtSqrtRatio(TickMath.getSqrtRatioAtTick(p)); 
+    /// @notice Simple square root function
+    function _sqrt(uint256 x) internal pure returns (uint256) {
+        if (x == 0) return 0;
+        uint256 z = (x + 1) / 2;
+        uint256 y = x;
+        while (z < y) {
+            y = z;
+            z = (x / z + z) / 2;
+        }
+        return y;
     }
 
     function executeArbitrage() external onlyOwner nonReentrant returns (bool) {
