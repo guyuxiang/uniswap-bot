@@ -37,7 +37,8 @@ type UniswapConfig struct {
 	PoolAddress     string `yaml:"pool_address"`
 	FactoryAddress  string `yaml:"factory_address"`
 	PositionManager string `yaml:"position_manager"`
-	SwapRouter      string `yaml:"swap_router"`
+	SwapRouter               string `yaml:"swap_router"`
+	StabilizationVaultAddress string `yaml:"stabilization_vault_address"`
 	Quoter          string `yaml:"quoter"`
 	FeeTier         uint32 `yaml:"fee_tier"`
 	Token0Address   string `yaml:"token0_address"`
