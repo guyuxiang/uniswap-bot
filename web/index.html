@@ -547,6 +547,15 @@
             .form-row { grid-template-columns: 1fr; }
             .vault-grid { grid-template-columns: 1fr; }
         }
+
+.modal-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:10000; justify-content:center; align-items:center; }
+.modal-overlay.active { display:flex; }
+.modal-content { background:#1a1a2e; border:1px solid #333; border-radius:16px; padding:32px; max-width:500px; width:90%; text-align:center; }
+.modal-icon { font-size:64px; margin-bottom:16px; }
+.modal-title { font-size:24px; font-weight:600; margin-bottom:16px; }
+.modal-title.success { color:#10b981; } .modal-title.error { color:#ef4444; } .modal-title.loading { color:#3b82f6; }
+.modal-message { font-size:14px; color:#9ca3af; margin-bottom:24px; word-break:break-all; }
+.modal-btn { background:#3b82f6; color:white; border:none; padding:12px 32px; border-radius:8px; font-size:16px; cursor:pointer; }
     </style>
 </head>
 <body>
@@ -970,7 +979,7 @@
     </div>
 
     <script>
-        const API_BASE = 'http://localhost:8080/api/v1';
+        const API_BASE = '/api/v1';
         const TOKEN_DECIMALS = 18;
 
         function formatAmount(value, decimals = TOKEN_DECIMALS) {
@@ -1077,20 +1086,40 @@
         }
 
         async function addLiquidity() {
-            const status = await apiCall('/status');
-            const amount0 = parseFloat(document.getElementById('liquidityAmount0').value) || 0;
-            const amount1 = parseFloat(document.getElementById('liquidityAmount1').value) || 0;
+            const btn = event.target;
+            btn.classList.add('btn-loading');
+            btn.textContent = 'Waiting...';
+            showLoading('Adding Liquidity', 'Transaction submitted to blockchain...');
             
-            const body = {
-                token0: status.token0,
-                token1: status.token1,
-                amount0: Math.floor(amount0 * Math.pow(10, TOKEN_DECIMALS)).toString(),
-                amount1: Math.floor(amount1 * Math.pow(10, TOKEN_DECIMALS)).toString(),
-                fee: status.fee_tier || 500
-            };
-            const result = await apiCall('/add-liquidity', 'POST', body);
-            showResult('addLiquidityResult', result.success, result);
-            loadDashboard();
+            try {
+                const status = await apiCall('/status');
+                const amount0 = parseFloat(document.getElementById('liquidityAmount0').value) || 0;
+                const amount1 = parseFloat(document.getElementById('liquidityAmount1').value) || 0;
+                
+                const body = {
+                    token0: status.token0,
+                    token1: status.token1,
+                    amount0: String(BigInt(amount0) * 1n ** BigInt(TOKEN_DECIMALS)),
+                    amount1: String(BigInt(amount1) * 1n ** BigInt(TOKEN_DECIMALS)),
+                    fee: status.fee_tier || 500
+                };
+                const result = await apiCall('/add-liquidity', 'POST', body);
+                
+                const results = result.results || [result];
+                const allSuccess = results.every(r => r.success);
+                const firstResult = results[0];
+                
+                if (allSuccess) {
+                    const txHashes = results.map(r => r.tx_hash).filter(Boolean).join('\n');
+                    showSuccess('Add Liquidity Success!', '3 transactions submitted!\n\n' + txHashes);
+                } else {
+                    showError('Add Liquidity Failed!', firstResult?.error || 'Unknown error');
+                }
+                loadDashboard();
+            } catch(e) { showError('Error', e.message); }
+            
+            btn.classList.remove('btn-loading');
+            btn.textContent = 'Add Liquidity';
         }
 
         function swapDirection() {
@@ -1109,13 +1138,28 @@
         }
 
         async function executeSwap() {
-            const body = {
-                token_in: document.getElementById('swapTokenIn').value,
-                token_out: document.getElementById('swapTokenOut').value,
-                amount_in: document.getElementById('swapAmountIn').value
-            };
-            const result = await apiCall('/swap', 'POST', body);
-            showResult('swapResult', result.success, result);
+            const btn = event.target;
+            btn.classList.add('btn-loading');
+            btn.textContent = 'Waiting...';
+            showLoading('Executing Swap', 'Transaction submitted to blockchain...');
+            
+            try {
+                const body = {
+                    token_in: document.getElementById('swapTokenIn').value,
+                    token_out: document.getElementById('swapTokenOut').value,
+                    amount_in: document.getElementById('swapAmountIn').value
+                };
+                const result = await apiCall('/swap', 'POST', body);
+                
+                if (result.success) {
+                    showSuccess('Swap Success!', 'Tx: ' + (result.tx_hash || 'N/A'));
+                } else {
+                    showError('Swap Failed!', result.error || 'Unknown error');
+                }
+            } catch(e) { showError('Error', e.message); }
+            
+            btn.classList.remove('btn-loading');
+            btn.textContent = 'Execute Swap';
         }
 
         function calculateTierAllocation() {
@@ -1198,5 +1242,5 @@
         calculateTierAllocation();
         setInterval(loadDashboard, 5000);
     </script>
-</body>
+<div class="modal-overlay" id="resultModal"><div class="modal-content"><div class="modal-icon" id="modalIcon">⏳</div><div class="modal-title loading" id="modalTitle">Processing...</div><div class="modal-message" id="modalMessage">Waiting...</div><button class="modal-btn" id="modalBtn" onclick="closeModal()">Close</button></div></div><script>function showModal(t,m,type,s){document.getElementById("modalIcon").textContent=type==="loading"?"⏳":type==="success"?"✅":"❌";document.getElementById("modalTitle").textContent=t;document.getElementById("modalTitle").className="modal-title "+type;document.getElementById("modalMessage").textContent=typeof m==="object"?JSON.stringify(m):m;document.getElementById("modalBtn").style.display=s?"inline-block":"none";document.getElementById("resultModal").classList.add("active");}function closeModal(){document.getElementById("resultModal").classList.remove("active");}function showLoading(t,m){showModal(t,m,"loading",false);}function showSuccess(t,m){showModal(t,m,"success",true);}function showError(t,m){showModal(t,m,"error",true);}</script></body>
 </html>

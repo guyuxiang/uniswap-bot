@@ -263,6 +263,13 @@ func (e *Executor) ApproveToken(ctx context.Context, tokenAddr, spender common.A
 }
 
 func (e *Executor) ExecuteSwap(ctx context.Context, tokenIn, tokenOut common.Address, amountIn *big.Int, amountOutMin *big.Int, sqrtPriceLimitX96 *big.Int) (*ExecutionResult, error) {
+	// Approve swap router to spend input token
+	swapRouterAddr := common.HexToAddress(e.cfg.Uniswap.SwapRouter)
+	maxAmount := new(big.Int).Mul(amountIn, big.NewInt(10))
+	if err := e.ApproveToken(ctx, tokenIn, swapRouterAddr, maxAmount); err != nil {
+		log.Printf("Warning: Failed to approve swap router: %v", err)
+	}
+
 	auth, err := bind.NewKeyedTransactorWithChainID(e.privateKey, e.chainID)
 	if err != nil {
 		return &ExecutionResult{Success: false, Error: err, Timestamp: time.Now()}, err
@@ -420,145 +427,137 @@ func CalculateTickRange(refPrice float64, fee uint32, rangeBps int) (int32, int3
 }
 
 type TierPosition struct {
-	Name      string   `json:"name"`
-	Amount0   *big.Int `json:"amount0"`
-	Amount1   *big.Int `json:"amount1"`
+	Name         string   `json:"name"`
+	Amount0      *big.Int `json:"amount0"`
+	Amount1      *big.Int `json:"amount1"`
+	PositionCount int     `json:"position_count"`
+	Liquidity    *big.Int `json:"liquidity"`
 }
 
-func (e *Executor) GetTierPositions(ctx context.Context) ([]TierPosition, error) {
-	walletAddr := e.walletAddress
-
-	balance, err := e.positionMgr.BalanceOf(&bind.CallOpts{Context: ctx}, walletAddr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get balance: %w", err)
-	}
-
-	coreAmount0 := big.NewInt(0)
-	coreAmount1 := big.NewInt(0)
-	midAmount0 := big.NewInt(0)
-	midAmount1 := big.NewInt(0)
-	tailAmount0 := big.NewInt(0)
-	tailAmount1 := big.NewInt(0)
-
-	slot0, err := e.pool.Slot0(&bind.CallOpts{Context: ctx})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get slot0: %w", err)
-	}
-
-	sqrtPriceX96 := slot0.SqrtPriceX96
-
-	for i := uint64(0); i < balance.Uint64(); i++ {
-		tokenId, err := e.positionMgr.TokenOfOwnerByIndex(&bind.CallOpts{Context: ctx}, walletAddr, big.NewInt(int64(i)))
-		if err != nil {
-			continue
-		}
-
-		pos, err := e.positionMgr.Positions(&bind.CallOpts{Context: ctx}, tokenId)
-		if err != nil {
-			continue
-		}
-
-		tickLower := int32(pos.TickLower.Int64())
-		tickUpper := int32(pos.TickUpper.Int64())
-		liquidity := pos.Liquidity
-
-		if liquidity.Sign() == 0 {
-			continue
-		}
-
-		amount0, amount1 := e.calculateTokenAmounts(liquidity, tickLower, tickUpper, sqrtPriceX96)
-
-		if tickLower >= -10 && tickUpper <= 10 {
-			coreAmount0.Add(coreAmount0, amount0)
-			coreAmount1.Add(coreAmount1, amount1)
-		} else if tickLower >= -50 && tickUpper <= 50 {
-			midAmount0.Add(midAmount0, amount0)
-			midAmount1.Add(midAmount1, amount1)
-		} else if tickLower >= -200 && tickUpper <= 200 {
-			tailAmount0.Add(tailAmount0, amount0)
-			tailAmount1.Add(tailAmount1, amount1)
-		}
-	}
-
-	return []TierPosition{
-		{Name: "core", Amount0: coreAmount0, Amount1: coreAmount1},
-		{Name: "mid", Amount0: midAmount0, Amount1: midAmount1},
-		{Name: "tail", Amount0: tailAmount0, Amount1: tailAmount1},
-	}, nil
-}
-
-func (e *Executor) calculateTokenAmounts(liquidity *big.Int, tickLower, tickUpper int32, sqrtPriceX96 *big.Int) (*big.Int, *big.Int) {
-	sqrtRatioX96 := sqrtPriceX96
-
-	sqrtLower := e.tickToSqrtRatioX96(tickLower)
-	sqrtUpper := e.tickToSqrtRatioX96(tickUpper)
-
-	oneX96 := new(big.Int).Lsh(big.NewInt(1), 96)
-
-	if liquidity.Sign() == 0 {
+// calculateTokenAmounts implements Uniswap V3 whitepaper formula
+func calculateTokenAmounts(liquidity *big.Int, tickLower, tickUpper int32, sqrtPriceX96 *big.Int) (*big.Int, *big.Int) {
+	if liquidity.Sign() == 0 || sqrtPriceX96.Sign() == 0 {
 		return big.NewInt(0), big.NewInt(0)
 	}
 
-	if sqrtLower.Sign() == 0 || sqrtUpper.Sign() == 0 || sqrtRatioX96.Sign() == 0 {
-		return big.NewInt(0), big.NewInt(0)
+	// Calculate sqrt prices for ticks
+	sqrtPa := new(big.Int).Lsh(big.NewInt(1), 96)
+	sqrtPb := new(big.Int).Lsh(big.NewInt(1), 96)
+
+	// sqrtPa = 1.0001^tickLower
+	// Using approximation: sqrtPa = 2^96 * (1.0001)^(tickLower/2)
+	for i := 0; i < int(tickLower); i++ {
+		sqrtPa.Mul(sqrtPa, big.NewInt(10001))
+		sqrtPa.Div(sqrtPa, big.NewInt(10000))
+	}
+	for i := 0; i < int(tickUpper); i++ {
+		sqrtPb.Mul(sqrtPb, big.NewInt(10001))
+		sqrtPb.Div(sqrtPb, big.NewInt(10000))
 	}
 
+	sqrtP := sqrtPriceX96
+	one := big.NewInt(1)
+	two96 := new(big.Int).Lsh(one, 96)
+
+	// Calculate current tick
 	currentTick := int32(0)
-	if sqrtRatioX96.Sign() > 0 {
-		currentTick = int32(math.Floor(math.Log(float64(sqrtRatioX96.Uint64())/float64(1<<64)) / math.Log(1.0001)))
+	if sqrtP.Sign() > 0 {
+		// tick = log_1.0001(price)
+		price := new(big.Float).SetInt(sqrtP)
+		price.Quo(price, new(big.Float).SetInt(two96))
+		price.Mul(price, price)
+		priceF64, _ := price.Float64()
+		if priceF64 > 0 {
+			currentTick = int32(math.Log(priceF64) / math.Log(1.0001))
+		}
 	}
 
 	var amount0, amount1 *big.Int
 
 	if currentTick <= tickLower {
-		amount0 = new(big.Int).Mul(liquidity, new(big.Int).Sub(sqrtUpper, sqrtLower))
-		amount0 = new(big.Int).Div(amount0, sqrtLower)
-		amount0 = new(big.Int).Div(amount0, oneX96)
+		// Price below range
+		num := new(big.Int).Sub(sqrtPb, sqrtPa)
+		den := new(big.Int).Mul(sqrtPa, sqrtPb)
+		amount0 = new(big.Int).Mul(liquidity, num)
+		amount0.Mul(amount0, two96)
+		amount0.Div(amount0, den)
 		amount1 = big.NewInt(0)
 	} else if currentTick >= tickUpper {
+		// Price above range
 		amount0 = big.NewInt(0)
-		amount1 = new(big.Int).Mul(liquidity, new(big.Int).Sub(sqrtUpper, sqrtLower))
-		amount1 = new(big.Int).Div(amount1, sqrtUpper)
-		amount1 = new(big.Int).Div(amount1, oneX96)
+		num := new(big.Int).Sub(sqrtPb, sqrtPa)
+		amount1 = new(big.Int).Mul(liquidity, num)
+		amount1.Div(amount1, two96)
 	} else {
-		amount0 = new(big.Int).Mul(liquidity, new(big.Int).Sub(sqrtRatioX96, sqrtLower))
-		amount0 = new(big.Int).Div(amount0, sqrtLower)
-		amount0 = new(big.Int).Div(amount0, oneX96)
+		// Price in range
+		num0 := new(big.Int).Sub(sqrtPb, sqrtP)
+		den0 := new(big.Int).Mul(sqrtP, sqrtPb)
+		amount0 = new(big.Int).Mul(liquidity, num0)
+		amount0.Mul(amount0, two96)
+		amount0.Div(amount0, den0)
 
-		amount1 = new(big.Int).Mul(liquidity, new(big.Int).Sub(sqrtUpper, sqrtRatioX96))
-		amount1 = new(big.Int).Div(amount1, sqrtUpper)
-		amount1 = new(big.Int).Div(amount1, oneX96)
+		num1 := new(big.Int).Sub(sqrtP, sqrtPa)
+		amount1 = new(big.Int).Mul(liquidity, num1)
+		amount1.Div(amount1, two96)
 	}
 
 	return amount0, amount1
 }
 
-func (e *Executor) tickToSqrtRatioX96(tick int32) *big.Int {
-	absTick := tick
-	if absTick < 0 {
-		absTick = -absTick
+func (e *Executor) GetTierPositions(ctx context.Context) ([]TierPosition, error) {
+	// Get pool liquidity via contract binding
+	poolLiquidity := big.NewInt(0)
+	currentTick := int32(0)
+	
+	if e.pool != nil {
+		liq, err := e.pool.Liquidity(&bind.CallOpts{Context: ctx})
+		if err == nil {
+			poolLiquidity = liq
+		}
+		
+		// Get current tick from slot0
+		slot0, err := e.pool.Slot0(&bind.CallOpts{Context: ctx})
+		if err == nil {
+			currentTick = int32(slot0.Tick.Int64())
+		}
 	}
 
-	ratio := new(big.Int).Lsh(big.NewInt(1), 96)
+	log.Printf("Pool liquidity: %s, currentTick: %d", poolLiquidity.String(), currentTick)
 
-	pos := absTick / 2
-	for i := int32(0); i < pos; i++ {
-		tmp1, _ := new(big.Int).SetString("79228162514264337593543950336", 10)
-		tmp2, _ := new(big.Int).SetString("999500001833390168889799", 10)
-		ratio = new(big.Int).Mul(ratio, tmp1)
-		ratio = new(big.Int).Div(ratio, tmp2)
+	// Get tick ranges from config
+	coreBps := int(e.cfg.Bot.CoreRangeBps)
+	midBps := int(e.cfg.Bot.MidRangeBps)
+	tailBps := int(e.cfg.Bot.TailRangeBps)
+	
+	// Calculate tick ranges
+	coreLower := currentTick - int32(coreBps)
+	coreUpper := currentTick + int32(coreBps)
+	midLower := currentTick - int32(midBps)
+	midUpper := currentTick + int32(midBps)
+	tailLower := currentTick - int32(tailBps)
+	tailUpper := currentTick + int32(tailBps)
+	
+	// Get sqrtPriceX96 for calculations
+	sqrtPriceX96 := big.NewInt(0)
+	if e.pool != nil {
+		slot0, _ := e.pool.Slot0(&bind.CallOpts{Context: ctx})
+		if slot0.Tick != nil {
+			sqrtPriceX96 = slot0.SqrtPriceX96
+		}
 	}
 
-	if absTick%2 == 1 {
-		tmp1, _ := new(big.Int).SetString("79228162514264337593543950336", 10)
-		tmp2, _ := new(big.Int).SetString("999500001833390168889799", 10)
-		ratio = new(big.Int).Mul(ratio, tmp1)
-		ratio = new(big.Int).Div(ratio, tmp2)
-	}
+	// Calculate token amounts for each tier
+	coreAmount0, coreAmount1 := calculateTokenAmounts(poolLiquidity, coreLower, coreUpper, sqrtPriceX96)
+	midAmount0, midAmount1 := calculateTokenAmounts(poolLiquidity, midLower, midUpper, sqrtPriceX96)
+	tailAmount0, tailAmount1 := calculateTokenAmounts(poolLiquidity, tailLower, tailUpper, sqrtPriceX96)
 
-	if tick < 0 {
-		ratio = new(big.Int).Div(new(big.Int).Lsh(big.NewInt(1), 96), ratio)
-	}
+	log.Printf("Core [%d, %d]: (%s, %s)", coreLower, coreUpper, coreAmount0.String(), coreAmount1.String())
+	log.Printf("Mid [%d, %d]: (%s, %s)", midLower, midUpper, midAmount0.String(), midAmount1.String())
+	log.Printf("Tail [%d, %d]: (%s, %s)", tailLower, tailUpper, tailAmount0.String(), tailAmount1.String())
 
-	return ratio
+	return []TierPosition{
+		{Name: "core", Amount0: coreAmount0, Amount1: coreAmount1, PositionCount: coreBps, Liquidity: poolLiquidity},
+		{Name: "mid", Amount0: midAmount0, Amount1: midAmount1, PositionCount: midBps, Liquidity: poolLiquidity},
+		{Name: "tail", Amount0: tailAmount0, Amount1: tailAmount1, PositionCount: tailBps, Liquidity: poolLiquidity},
+	}, nil
 }
