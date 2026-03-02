@@ -1,0 +1,7 @@
+[rpc_endpoints]
+unichain = "https://astrochain-sepolia.gateway.tenderly.co/5neqYQoinBsj3Cc3O36Dun"
+
+[profile.default]
+src = "src"
+out = "out"
+solc = "0.8.20"
