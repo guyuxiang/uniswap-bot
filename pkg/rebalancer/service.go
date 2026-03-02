@@ -109,18 +109,14 @@ func (r *Rebalancer) ExecuteRebalance(ctx context.Context) error {
 		return fmt.Errorf("rebalance not needed: %s", reason)
 	}
 
+	// Only execute stabilization (arbitrage)
 	if r.cfg.Stabilization.Enabled {
 		stabilizeErr := r.ExecuteStabilization(ctx)
 		if stabilizeErr != nil {
 			log.Printf("Stabilization failed: %v", stabilizeErr)
+			return stabilizeErr
 		}
 	}
-
-	coreLower, coreUpper, midLower, midUpper, tailLower, tailUpper := r.CalculateRanges()
-
-	r.positionService.AddLayer("core", r.cfg.Bot.CoreRatio, coreLower, coreUpper, big.NewInt(0))
-	r.positionService.AddLayer("mid", r.cfg.Bot.MidRatio, midLower, midUpper, big.NewInt(0))
-	r.positionService.AddLayer("tail", r.cfg.Bot.TailRatio, tailLower, tailUpper, big.NewInt(0))
 
 	r.lastRebalance = time.Now()
 
