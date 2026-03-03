@@ -123,21 +123,18 @@ contract StabilizationVault is Ownable, ReentrancyGuard {
         require(liquidity > 0, "No liquidity");
 
         // Calculate current price from sqrtPriceX96
-        uint256 currentPrice = (uint256(sqrtPriceX96) ** 2) >> 192;
+        uint256 currentPrice = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96)) >> 192;
 
         // Determine swap direction
+        // zeroForOne = true: target > current, sell token0 for token1 (buy token1)
+        // zeroForOne = false: target < current, sell token1 for token0 (buy token0)
         bool zeroForOne = _targetPrice > currentPrice;
 
         // Convert target price to sqrtPriceX96
-        // price = (sqrtPriceX96^2) / 2^192
-        // sqrtPriceX96 = sqrt(price * 2^192)
         uint160 targetSqrtPriceX96 = _priceToSqrtPriceX96(_targetPrice);
 
-        // Use zeroForOne to determine direction
-        uint160 targetForCalc = zeroForOne ? targetSqrtPriceX96 : sqrtPriceX96;
-        uint160 currentForCalc = zeroForOne ? sqrtPriceX96 : targetSqrtPriceX96;
-
-        (amountIn, , ) = amountInToReachTarget(pool, currentForCalc, targetForCalc);
+        // Pass direction to amountInToReachTarget
+        (amountIn, , ) = amountInToReachTarget(pool, sqrtPriceX96, targetSqrtPriceX96, zeroForOne);
 
         // Use correct token decimals based on direction
         uint8 decimals = zeroForOne ? IERC20Metadata(token0).decimals() : IERC20Metadata(token1).decimals();
@@ -149,13 +146,15 @@ contract StabilizationVault is Ownable, ReentrancyGuard {
     /// @param poolAddr The Uniswap V3 pool
     /// @param currentSqrtPriceX96 Current sqrt price
     /// @param targetSqrtPriceX96 Target sqrt price
+    /// @param zeroForOne Direction: true = token0 -> token1, false = token1 -> token0
     /// @return amountInWithFee Amount of tokenIn (including fee)
     /// @return finalTick Final tick after swap
     /// @return finalLiquidity Final liquidity after swap
     function amountInToReachTarget(
         IUniswapV3Pool poolAddr,
         uint160 currentSqrtPriceX96,
-        uint160 targetSqrtPriceX96
+        uint160 targetSqrtPriceX96,
+        bool zeroForOne
     ) public view returns (uint256 amountInWithFee, int24 finalTick, uint128 finalLiquidity) {
         (uint160 sqrtPriceX96, int24 tick, , , , , ) = poolAddr.slot0();
         uint128 liquidity = poolAddr.liquidity();
@@ -164,9 +163,7 @@ contract StabilizationVault is Ownable, ReentrancyGuard {
         require(liquidity > 0);
         require(targetSqrtPriceX96 != sqrtPriceX96);
 
-        bool zeroForOne = currentSqrtPriceX96 > targetSqrtPriceX96;
-
-        // Override with calculated direction
+        // Override with passed current price
         sqrtPriceX96 = currentSqrtPriceX96;
 
         while (sqrtPriceX96 != targetSqrtPriceX96) {
@@ -181,13 +178,16 @@ contract StabilizationVault is Ownable, ReentrancyGuard {
                 ? (sqrtPriceNextTickX96 < targetSqrtPriceX96 ? targetSqrtPriceX96 : sqrtPriceNextTickX96)
                 : (sqrtPriceNextTickX96 > targetSqrtPriceX96 ? targetSqrtPriceX96 : sqrtPriceNextTickX96);
 
+            // Fix: Correct parameters for SwapMath.computeSwapStep
+            // zeroForOne: amountRemaining = max (we want to swap until target), fee = fee, sqrtPriceLimit = 0
+            // !zeroForOne: amountRemaining = max (sell token1), fee = 0, sqrtPriceLimit = MIN (don't go below)
             (uint256 amountIn, , uint160 sqrtPriceNextX96) = SwapMath.computeSwapStep(
                 sqrtPriceX96,
                 stepTarget,
                 liquidity,
-                type(int256).max,
+                zeroForOne ? type(int256).max : type(int256).max,
                 zeroForOne ? int256(int24(fee)) : int256(0),
-                zeroForOne ? 0 : type(uint256).max
+                zeroForOne ? uint160(0) : TickMath.MIN_SQRT_RATIO + 1
             );
 
             amountInWithFee += amountIn;
@@ -247,7 +247,7 @@ contract StabilizationVault is Ownable, ReentrancyGuard {
         require(!circuitBreakerActive, "Circuit breaker active");
 
         (uint160 sqrtPriceX96, ) = getPrice();
-        uint256 currentPrice = (uint256(sqrtPriceX96) ** 2) >> 192;
+        uint256 currentPrice = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96)) >> 192;
 
         uint256 priceDiff = currentPrice > targetPrice ? currentPrice - targetPrice : targetPrice - currentPrice;
         uint256 deviationBps = (priceDiff * 10000) / targetPrice;
