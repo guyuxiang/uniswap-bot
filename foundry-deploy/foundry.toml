@@ -5,3 +5,12 @@ unichain = "https://astrochain-sepolia.gateway.tenderly.co/5neqYQoinBsj3Cc3O36Du
 src = "src"
 out = "out"
 solc = "0.8.20"
+via_ir = true
+optimizer = true
+
+remappings = [
+    "uni-v3-lib/=lib/uni-v3-lib/src/",
+    "openzeppelin-contracts/=lib/openzeppelin-contracts/",
+    "openzeppelin/=lib/openzeppelin-contracts/contracts/",
+    "v3-core/=lib/v3-core/contracts/",
+]

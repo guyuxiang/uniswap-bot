@@ -1,31 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@uniswap/v3-core/contracts/libraries/TickMath.sol";
-import "@uniswap/v3-core/contracts/libraries/TickBitmap.sol";
-import "@uniswap/v3-core/contracts/libraries/SwapMath.sol";
-import "@uniswap/v3-core/contracts/libraries/LiquidityMath.sol";
+import "openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
+import "openzeppelin-contracts/contracts/access/Ownable.sol";
+import "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
+import "uni-v3-lib/TickMath.sol";
+import "uni-v3-lib/TickBitmap.sol";
+import "uni-v3-lib/PoolCaller.sol";
+import "uni-v3-lib/SwapMath.sol";
+import "uni-v3-lib/LiquidityMath.sol";
+import "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import "openzeppelin-contracts/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
-interface IERC20 {
-    function transfer(address to, uint256 amount) external returns (bool);
-    function transferFrom(address from, address to, uint256 amount) external returns (bool);
-    function balanceOf(address account) external view returns (uint256);
-    function approve(address spender, uint256 amount) external returns (bool);
-}
-
-interface IERC20Metadata is IERC20 {
-    function decimals() external view returns (uint8);
-}
-
-library SafeERC20 {
-    function safeTransfer(IERC20 t, address to, uint256 a) internal { (bool s,) = address(t).call(abi.encodeCall(IERC20.transfer, (to, a))); require(s); }
-    function safeTransferFrom(IERC20 t, address f, address to, uint256 a) internal { (bool s,) = address(t).call(abi.encodeCall(IERC20.transferFrom, (f, to, a))); require(s); }
-    function forceApprove(IERC20 t, address s, uint256 v) internal { (bool s,) = address(t).call(abi.encodeCall(IERC20.approve, (s, v))); require(s); }
-}
-
-interface IUniswapV3Pool {
+interface UniswapV3Pool {
     function slot0() external view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationCardinality, uint16 observationCardinalityNext, uint16 feeProtocol, uint8 unlocked, bool);
     function liquidity() external view returns (uint128);
     function tickSpacing() external view returns (int24);
@@ -33,7 +20,9 @@ interface IUniswapV3Pool {
     function ticks(int24) external view returns (uint128 liquidityGross, int128 liquidityNet, uint256 feeGrowthOutside0X128, uint256 feeGrowthOutside1X128, int56 tickCumulativeOutside, uint160 secondsPerLiquidityOutsideX128, uint32 secondsOutside, bool initialized);
 }
 
-interface IUniswapV3Factory { function getPool(address, address, uint24) external view returns (address); }
+interface UniswapV3Factory {
+    function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool);
+}
 
 interface ISwapRouter {
     struct ExactInputSingleParams {
@@ -56,7 +45,7 @@ contract StabilizationVault is Ownable, ReentrancyGuard {
     address public token1;
     uint256 public reserve0;
     uint256 public reserve1;
-    IUniswapV3Pool public pool;
+    UniswapV3Pool public pool;
     ISwapRouter public swapRouter;
     uint24 public fee;
     uint256 public rebalanceThresholdBps = 20;
@@ -81,7 +70,7 @@ contract StabilizationVault is Ownable, ReentrancyGuard {
         token0 = _token0;
         token1 = _token1;
         factory = _factory;
-        pool = IUniswapV3Pool(IUniswapV3Factory(_factory).getPool(token0, token1, _fee));
+        pool = UniswapV3Pool(UniswapV3Factory(_factory).getPool(token0, token1, _fee));
         fee = _fee;
         swapRouter = ISwapRouter(_swapRouter);
         targetPrice = 1;
@@ -151,7 +140,7 @@ contract StabilizationVault is Ownable, ReentrancyGuard {
     /// @return finalTick Final tick after swap
     /// @return finalLiquidity Final liquidity after swap
     function amountInToReachTarget(
-        IUniswapV3Pool poolAddr,
+        UniswapV3Pool poolAddr,
         uint160 currentSqrtPriceX96,
         uint160 targetSqrtPriceX96,
         bool zeroForOne
@@ -178,16 +167,15 @@ contract StabilizationVault is Ownable, ReentrancyGuard {
                 ? (sqrtPriceNextTickX96 < targetSqrtPriceX96 ? targetSqrtPriceX96 : sqrtPriceNextTickX96)
                 : (sqrtPriceNextTickX96 > targetSqrtPriceX96 ? targetSqrtPriceX96 : sqrtPriceNextTickX96);
 
-            // Fix: Correct parameters for SwapMath.computeSwapStep
-            // zeroForOne: amountRemaining = max (we want to swap until target), fee = fee, sqrtPriceLimit = 0
-            // !zeroForOne: amountRemaining = max (sell token1), fee = 0, sqrtPriceLimit = MIN (don't go below)
-            (uint256 amountIn, , uint160 sqrtPriceNextX96) = SwapMath.computeSwapStep(
+            // Fix: Correct parameters for SwapMath.computeSwapStep from uni-v3-lib
+            // zeroForOne: amountRemaining = max (we want to swap until target), fee = fee
+            // !zeroForOne: amountRemaining = max (sell token1), fee = 0
+            (uint160 sqrtPriceNextX96, uint256 amountIn, , ) = SwapMath.computeSwapStep(
                 sqrtPriceX96,
                 stepTarget,
                 liquidity,
-                zeroForOne ? type(int256).max : type(int256).max,
-                zeroForOne ? int256(int24(fee)) : int256(0),
-                zeroForOne ? uint160(0) : TickMath.MIN_SQRT_RATIO + 1
+                type(int256).max,
+                zeroForOne ? fee : 0
             );
 
             amountInWithFee += amountIn;
@@ -208,16 +196,18 @@ contract StabilizationVault is Ownable, ReentrancyGuard {
         finalLiquidity = liquidity;
     }
 
-    function _nextInitializedTick(IUniswapV3Pool poolAddr, int24 tick, int24 ts, bool zf1) internal view returns (int24, bool) {
+    function _nextInitializedTick(UniswapV3Pool poolAddr, int24 tick, int24 ts, bool zf1) internal view returns (int24, bool) {
         int24 compressed = tick / ts;
         if (tick < 0 && tick % ts != 0) compressed--;
         return _nextInitializedTickWithinOneWord(poolAddr, compressed, ts, zf1);
     }
 
-    function _nextInitializedTickWithinOneWord(IUniswapV3Pool poolAddr, int24 ct, int24 ts, bool lte) internal view returns (int24, bool) {
-        (int16 wp, uint8 bp) = TickBitmap.position(ct);
-        uint256 w = poolAddr.tickBitmap(wp);
-        return TickBitmap.nextInitializedTickWithinOneWord(w, ct, ts, lte);
+    function _nextInitializedTickWithinOneWord(UniswapV3Pool poolAddr, int24 ct, int24 ts, bool lte) internal view returns (int24, bool) {
+        V3PoolCallee v3pool = V3PoolCallee.wrap(address(poolAddr));
+        (int24 next, bool initialized, , ) = TickBitmap.nextInitializedTickWithinOneWord(
+            v3pool, ct, ts, lte, type(int16).min, 0
+        );
+        return (next, initialized);
     }
 
     /// @notice Convert price (token1/token0) to sqrtPriceX96

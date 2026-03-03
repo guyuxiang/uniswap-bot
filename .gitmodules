@@ -6,4 +6,7 @@
 	url = https://github.com/openzeppelin/openzeppelin-contracts
 [submodule "foundry-deploy/lib/v3-core"]
 	path = foundry-deploy/lib/v3-core
-	url = https://github.com/Uniswap/v3-core
+	url = https://github.com/uniswap/v3-core
+[submodule "foundry-deploy/lib/uni-v3-lib"]
+	path = foundry-deploy/lib/uni-v3-lib
+	url = https://github.com/aperture-finance/uni-v3-lib
