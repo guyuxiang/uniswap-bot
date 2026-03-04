@@ -257,9 +257,15 @@ func NewBot() (*Bot, error) {
 		return nil, fmt.Errorf("failed to create uniswap client: %w", err)
 	}
 
-	exec, err := executor.NewExecutor(cfg)
+	// Initialize executor - log warning but continue
+	var exec *executor.Executor
+	exec, err = executor.NewExecutor(cfg)
 	if err != nil {
-		log.Printf("Warning: Failed to create executor: %v", err)
+		log.Printf("WARNING: Failed to create executor: %v", err)
+		log.Printf("WARNING: Stabilization will not be available")
+		// Continue instead of returning error - executor can be nil
+	} else {
+		log.Printf("Executor initialized successfully")
 	}
 
 	positionService := position.NewPositionService()

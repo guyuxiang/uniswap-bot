@@ -80,8 +80,15 @@ func (r *Rebalancer) ShouldRebalance() (bool, string) {
 }
 
 func (r *Rebalancer) calculateDeviation() float64 {
+	// Use big.Float for precision
 	diff := new(big.Float).Sub(r.currentPrice, r.twapPrice)
 	absDiff := new(big.Float).Abs(diff)
+	
+	// Avoid division by zero
+	if r.twapPrice.Sign() == 0 {
+		return 0.0
+	}
+	
 	deviation := new(big.Float).Quo(absDiff, r.twapPrice)
 	dev, _ := deviation.Float64()
 	return dev
@@ -151,6 +158,34 @@ func (r *Rebalancer) ExecuteStabilization(ctx context.Context) error {
 		return fmt.Errorf("stabilization not needed: %s", reason)
 	}
 
+	// Retry mechanism
+	maxRetries := 3
+	var lastErr error
+	
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		log.Printf("=== Stabilization attempt %d/%d ===", attempt, maxRetries)
+		
+		err := r.doStabilization(ctx)
+		if err == nil {
+			log.Printf("Stabilization successful on attempt %d", attempt)
+			return nil
+		}
+		
+		lastErr = err
+		log.Printf("Stabilization attempt %d failed: %v", attempt, err)
+		
+		// Wait before retry
+		if attempt < maxRetries {
+			waitTime := time.Duration(attempt) * 2 * time.Second
+			log.Printf("Waiting %v before retry...", waitTime)
+			time.Sleep(waitTime)
+		}
+	}
+	
+	return fmt.Errorf("stabilization failed after %d attempts: %w", maxRetries, lastErr)
+}
+
+func (r *Rebalancer) doStabilization(ctx context.Context) error {
 	token0Addr := common.HexToAddress(r.cfg.Uniswap.Token0Address)
 	token1Addr := common.HexToAddress(r.cfg.Uniswap.Token1Address)
 
